@@ -1,6 +1,5 @@
 import struct
 import sys
-from packet_struct import IP_Header, TCP_Header, Packet_Data, Connection
 from collections import defaultdict
 import math
 
@@ -10,12 +9,14 @@ def analyze_traceroute(file_path):
 
     source_ip = None
     destination_ip = None
-    intermediate_ips = defaultdict(list)
+    intermediate_ips = []
     protocols = set()
     fragments = defaultdict(list)
     rtt_data = defaultdict(list)
 
     def parse_pcap(file_path):
+        nonlocal source_ip, destination_ip
+
         with open(file_path, 'rb') as f:
 
             # Obtaining global header and identifying big/small endianese
@@ -23,9 +24,9 @@ def analyze_traceroute(file_path):
 
             magic_number = global_header[:4]
 
-            if magic_number == b'\xa1\xb2\xc3\xd4':
+            if b'\xc3\xd4' in magic_number:
                 ordering = ">"
-            elif magic_number == b'\xd4\xc3\xb2\xa1':
+            elif b'\xb2\xa1' in magic_number :
                 ordering = "<"
             else:
                 raise ValueError("Unsupported pcap format")
@@ -34,59 +35,63 @@ def analyze_traceroute(file_path):
             
             # Extract packets
             while True:
-                    packet_header = f.read(16)
-                    if not packet_header:
-                        break
+                packet_header = f.read(16)
+                if not packet_header:
+                    break
 
-                    if len(packet_header) < 16:
-                        continue
+                if len(packet_header) < 16:
+                    continue
 
-                    ts_sec, ts_usec, incl_len, orig_len = struct.unpack(ordering + 'IIII', packet_header)
-                    packet_data = f.read(incl_len)
-                    if len(packet_data) < incl_len:
-                        continue
+                ts_sec, ts_usec, incl_len, orig_len = struct.unpack(ordering + 'IIII', packet_header)
+                packet_data = f.read(incl_len)
+                if len(packet_data) < incl_len:
+                    continue
 
-                    if start_time == 0:
-                        start_time = ts_sec + ts_usec * 1e-6
+                if start_time == 0:
+                    start_time = ts_sec + ts_usec * 1e-6
 
-                    ethernet_offset = 14
-                    ip_data = packet_data[ethernet_offset:]
+                ethernet_offset = 14
+                ip_data = packet_data[ethernet_offset:]
 
-                    # Parse IP Header
-                    version_ihl = ip_data[0]
-                    ihl = (version_ihl & 0x0F) * 4
-                    ttl = ip_data[8]
-                    protocol = ip_data[9]
-                    src_ip = ".".join(map(str, ip_data[12:16]))
-                    dst_ip = ".".join(map(str, ip_data[16:20]))
+                # Parse IP Header
+                version_ihl = ip_data[0]
+                ihl = (version_ihl & 0x0F) * 4
+                ttl = ip_data[8]
+                protocol = ip_data[9]
+                src_ip = ".".join(map(str, ip_data[12:16]))
+                dst_ip = ".".join(map(str, ip_data[16:20]))
 
-                    # Fragmentation flags and offset
-                    flags_offset = struct.unpack(ordering + 'H', ip_data[6:8])[0]
-                    more_fragments = (flags_offset & 0x2000) >> 13
-                    fragment_offset = (flags_offset & 0x1FFF) * 8
+                # Fragmentation flags and offset
+                flags_offset = struct.unpack(ordering + 'H', ip_data[6:8])[0]
+                more_fragments = (flags_offset & 0x2000) >> 13
+                fragment_offset = (flags_offset & 0x1FFF) * 8
 
-                    # RTT (mock calculation based on timestamp)
-                    timestamp = ts_sec + ts_usec * 1e-6
-                    rtt = timestamp - start_time
+                # RTT (mock calculation based on timestamp)
+                timestamp = ts_sec + ts_usec * 1e-6
+                rtt = timestamp - start_time
 
-                    # Record source and destination IPs
-                    if source_ip is None:
-                        source_ip = src_ip
+                # Record source and destination IPs
+                if source_ip is None:
+                    source_ip = src_ip
                     destination_ip = dst_ip
 
-                    # Record intermediate nodes based on TTL
-                    if src_ip != source_ip and src_ip != destination_ip:
-                        intermediate_ips[ttl].append(src_ip)
+                if protocol == 1:
+                    icmp_type = ip_data[ihl]
+                    if icmp_type == 11 and src_ip not in intermediate_ips:
+                        intermediate_ips.append(src_ip)
+                elif protocol == 17:
+                    if src_ip == source_ip and dst_ip not in intermediate_ips:
+                        pass
 
-                    # Record protocols
-                    protocols.add(protocol)
+                # Record protocols
+                protocols.add(protocol)
 
-                    # Analyze fragmentation
-                    if more_fragments or fragment_offset > 0:
-                        fragments[src_ip].append(fragment_offset)
+                # Analyze fragmentation
+                if more_fragments or fragment_offset > 0:
+                    fragments[src_ip].append(fragment_offset)
 
-                    # Record RTTs
-                    rtt_data[dst_ip].append(rtt)
+                # Record RTTs
+                rtt_data[dst_ip].append(rtt)
 
     parse_pcap(file_path)
 
@@ -95,13 +100,15 @@ def analyze_traceroute(file_path):
     print(f"The IP address of the ultimate destination node: {destination_ip}")
     
     print("The IP addresses of intermediate destination nodes:")
-    for hop_count, ips in sorted(intermediate_ips.items()):
-        for idx, ip in enumerate(sorted(ips)):
-            print(f"  router {hop_count}-{idx + 1}: {ip}")
+    for idx, ip in enumerate(intermediate_ips):
+        print(f"  router {idx + 1}: {ip},")
 
     print("\nThe values in the protocol field of IP headers:")
     for protocol in protocols:
-        print(f"  {protocol}: {protocol}")
+        if protocol == 1:
+            print(f"  {protocol}: ICMP")
+        elif protocol == 17:
+            print(f"  {protocol}: UDP")
 
     # Fragmentation analysis
     total_fragments = sum(len(offsets) for offsets in fragments.values())
