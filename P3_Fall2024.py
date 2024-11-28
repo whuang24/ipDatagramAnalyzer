@@ -115,7 +115,7 @@ def analyze_traceroute(file_path):
                     elif icmp_type == 3:
                         for time in timestamp_data[icmp_src_port]:
                             rtt_time = timestamp - time
-                            rtt_data[src_ip].append(rtt_time)
+                            rtt_data["dest"].append(rtt_time)
 
                 # Record protocols
                 protocols.add(protocol)
@@ -149,6 +149,9 @@ def analyze_traceroute(file_path):
 
     # RTT statistics
     print("\nRound trip time statistics:")
+
+    dest_rtt = rtt_data.pop("dest", None)
+    print(f"  The avg RTT between {source_ip} and ultimate destination node {destination_ip} is: {dest_rtt[1]:.2f} ms, the s.d. is: {dest_rtt[2]:.2f} ms\n")
 
     rtt_strings = []
     for ip, times in rtt_data.items():
