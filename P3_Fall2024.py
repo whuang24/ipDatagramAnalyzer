@@ -15,9 +15,23 @@ def extract_udp_from_icmp(ip_data, icmp_offset):
     udp_offset = original_ip_data_offset + original_ihl
     udp_header = ip_data[udp_offset:udp_offset + 8]
 
-    # Parse the UDP header
     src_port, dst_port = struct.unpack("!HH", udp_header[:4])
     return src_port
+
+
+def extract_icmp_from_icmp(ip_data, ihl):
+    inner_ip_offset = ihl + 8
+    inner_ip_data = ip_data[inner_ip_offset:]
+
+    # Parse the inner IP header
+    inner_version_ihl = inner_ip_data[0]
+    inner_ihl = (inner_version_ihl & 0x0F) * 4
+
+    inner_icmp_offset = inner_ihl
+    inner_icmp_header = inner_ip_data[inner_icmp_offset:inner_icmp_offset + 8]
+
+    _, _, _, identifier, sequence_number = struct.unpack("!BBHHH", inner_icmp_header)
+    return sequence_number
 
 def analyze_traceroute(file_path):
 
@@ -47,6 +61,8 @@ def analyze_traceroute(file_path):
                 raise ValueError("Unsupported pcap format")
             
             start_time = 0
+
+            windows_trace = False
 
             packet_no = 1
             
@@ -81,18 +97,21 @@ def analyze_traceroute(file_path):
                 more_fragments = (flags_offset & 0x2000) >> 13
                 fragment_offset = (flags_offset & 0x1FFF) * 8
 
-                # RTT (mock calculation based on timestamp)
                 timestamp = ts_sec + ts_usec * 1e-6
 
-                udp_header = ip_data[ihl:ihl + 8]
-                src_port, dst_port = struct.unpack("!HH", udp_header[:4])
-
                 # Record source and destination IPs
-                
                 if protocol == 17: #UDP packets aka probing packets
-                    if source_ip is None and ttl == 1:
+                    udp_header = ip_data[ihl:ihl + 8]
+                    src_port, dst_port = struct.unpack("!HH", udp_header[:4])
+
+                    if dst_port == 53 or src_port == 53:
+                        continue
+                    
+                    if ttl == 1:
                         source_ip = src_ip
                         destination_ip = dst_ip
+                        protocols.add(protocol)
+                        windows_trace = False
 
                         if start_time == 0:
                             start_time = ts_sec + ts_usec * 1e-6
@@ -100,29 +119,63 @@ def analyze_traceroute(file_path):
                     if dst_ip == destination_ip:
                         timestamp_data[src_port].append(timestamp)
 
-                elif protocol == 1 and (not start_time is None): #ICMP returning packets
-                    icmp_type = ip_data[ihl]
+                elif protocol == 1 and start_time == 0: #ICMP probing packets
+                    protocols.add(protocol)
+                    windows_trace = True
+                    if source_ip is None and ttl == 1:
+                        source_ip = src_ip
+                        destination_ip = dst_ip
 
-                    icmp_src_port = extract_udp_from_icmp(ip_data, ihl)
-                    if icmp_type == 11:
-                        for time in timestamp_data[icmp_src_port]:
-                            rtt_time = timestamp - time
-                            rtt_data[src_ip].append(rtt_time)
-                            
-                        if src_ip not in intermediate_ips:
-                            intermediate_ips.append(src_ip)
+                        if start_time == 0:
+                            start_time = ts_sec + ts_usec * 1e-6
 
-                    elif icmp_type == 3:
-                        for time in timestamp_data[icmp_src_port]:
-                            rtt_time = timestamp - time
-                            rtt_data["dest"].append(rtt_time)
+                    icmp_header = ip_data[ihl: ihl + 8]
+                    icmp_type, icmp_code, icmp_checksum, identifier, seq_num = struct.unpack("!BBHHH", icmp_header[:8])
 
-                # Record protocols
-                protocols.add(protocol)
+                    if icmp_type == 8:
+                        timestamp_data[seq_num].append(timestamp)
 
-                # Analyze fragmentation
+                elif protocol == 1 and (not start_time == 0): #ICMP returning packets
+                    if not windows_trace:
+                        icmp_type = ip_data[ihl]
+
+                        icmp_src_port = extract_udp_from_icmp(ip_data, ihl)
+                        if icmp_type == 11:
+                            for time in timestamp_data[icmp_src_port]:
+                                rtt_time = timestamp - time
+                                rtt_data[src_ip].append(rtt_time)
+                                
+                            if src_ip not in intermediate_ips:
+                                intermediate_ips.append(src_ip)
+
+                        elif icmp_type == 3:
+                            for time in timestamp_data[icmp_src_port]:
+                                rtt_time = timestamp - time
+                                rtt_data["dest"].append(rtt_time)
+                    else:
+                        icmp_header = ip_data[ihl: ihl + 8]
+                        icmp_type, icmp_code, icmp_checksum, identifier, seq_num = struct.unpack("!BBHHH", icmp_header[:8])
+                        
+                        if icmp_type == 8:
+                            if dst_ip == destination_ip:
+                                timestamp_data[seq_num].append(timestamp)
+                        elif icmp_type == 11:
+                            inner_icmp_seq_num = extract_icmp_from_icmp(ip_data, ihl)
+                            for time in timestamp_data[inner_icmp_seq_num]:
+                                rtt_time = timestamp - time
+                                rtt_data[src_ip].append(rtt_time)
+                                
+                            if src_ip not in intermediate_ips:
+                                intermediate_ips.append(src_ip)
+                        elif icmp_type == 0:
+                            for time in timestamp_data[seq_num]:
+                                rtt_time = timestamp - time
+                                rtt_data["dest"].append(rtt_time)
+
                 if more_fragments or fragment_offset > 0:
                     fragments[src_ip].append(fragment_offset)
+
+                packet_no += 1
 
     parse_pcap(file_path)
 
@@ -151,7 +204,8 @@ def analyze_traceroute(file_path):
     print("\nRound trip time statistics:")
 
     dest_rtt = rtt_data.pop("dest", None)
-    print(f"  The avg RTT between {source_ip} and ultimate destination node {destination_ip} is: {dest_rtt[1]:.2f} ms, the s.d. is: {dest_rtt[2]:.2f} ms\n")
+    avg, std_dev = calculate_stats(dest_rtt)
+    print(f"  The avg RTT between {source_ip} and ultimate destination node {destination_ip} is: {avg:.2f} ms, the s.d. is: {std_dev:.2f} ms\n")
 
     rtt_strings = []
     for ip, times in rtt_data.items():
