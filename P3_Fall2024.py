@@ -5,6 +5,20 @@ import math
 
 connections = {}
 
+def extract_udp_from_icmp(ip_data, icmp_offset):
+    original_ip_data_offset = icmp_offset + 8
+    
+    original_ip_header = ip_data[original_ip_data_offset:]
+    original_version_ihl = original_ip_header[0]
+    original_ihl = (original_version_ihl & 0x0F) * 4
+    
+    udp_offset = original_ip_data_offset + original_ihl
+    udp_header = ip_data[udp_offset:udp_offset + 8]
+
+    # Parse the UDP header
+    src_port, dst_port = struct.unpack("!HH", udp_header[:4])
+    return src_port
+
 def analyze_traceroute(file_path):
 
     source_ip = None
@@ -12,6 +26,7 @@ def analyze_traceroute(file_path):
     intermediate_ips = []
     protocols = set()
     fragments = defaultdict(list)
+    timestamp_data = defaultdict(list)
     rtt_data = defaultdict(list)
 
     def parse_pcap(file_path):
@@ -32,6 +47,8 @@ def analyze_traceroute(file_path):
                 raise ValueError("Unsupported pcap format")
             
             start_time = 0
+
+            packet_no = 1
             
             # Extract packets
             while True:
@@ -47,8 +64,6 @@ def analyze_traceroute(file_path):
                 if len(packet_data) < incl_len:
                     continue
 
-                if start_time == 0:
-                    start_time = ts_sec + ts_usec * 1e-6
 
                 ethernet_offset = 14
                 ip_data = packet_data[ethernet_offset:]
@@ -68,20 +83,39 @@ def analyze_traceroute(file_path):
 
                 # RTT (mock calculation based on timestamp)
                 timestamp = ts_sec + ts_usec * 1e-6
-                rtt = timestamp - start_time
+
+                udp_header = ip_data[ihl:ihl + 8]
+                src_port, dst_port = struct.unpack("!HH", udp_header[:4])
 
                 # Record source and destination IPs
-                if source_ip is None:
-                    source_ip = src_ip
-                    destination_ip = dst_ip
+                
+                if protocol == 17: #UDP packets aka probing packets
+                    if source_ip is None and ttl == 1:
+                        source_ip = src_ip
+                        destination_ip = dst_ip
 
-                if protocol == 1:
+                        if start_time == 0:
+                            start_time = ts_sec + ts_usec * 1e-6
+
+                    if dst_ip == destination_ip:
+                        timestamp_data[src_port].append(timestamp)
+
+                elif protocol == 1 and (not start_time is None): #ICMP returning packets
                     icmp_type = ip_data[ihl]
-                    if icmp_type == 11 and src_ip not in intermediate_ips:
-                        intermediate_ips.append(src_ip)
-                elif protocol == 17:
-                    if src_ip == source_ip and dst_ip not in intermediate_ips:
-                        pass
+
+                    icmp_src_port = extract_udp_from_icmp(ip_data, ihl)
+                    if icmp_type == 11:
+                        for time in timestamp_data[icmp_src_port]:
+                            rtt_time = timestamp - time
+                            rtt_data[src_ip].append(rtt_time)
+                            
+                        if src_ip not in intermediate_ips:
+                            intermediate_ips.append(src_ip)
+
+                    elif icmp_type == 3:
+                        for time in timestamp_data[icmp_src_port]:
+                            rtt_time = timestamp - time
+                            rtt_data[src_ip].append(rtt_time)
 
                 # Record protocols
                 protocols.add(protocol)
@@ -89,9 +123,6 @@ def analyze_traceroute(file_path):
                 # Analyze fragmentation
                 if more_fragments or fragment_offset > 0:
                     fragments[src_ip].append(fragment_offset)
-
-                # Record RTTs
-                rtt_data[dst_ip].append(rtt)
 
     parse_pcap(file_path)
 
@@ -118,9 +149,16 @@ def analyze_traceroute(file_path):
 
     # RTT statistics
     print("\nRound trip time statistics:")
+
+    rtt_strings = []
     for ip, times in rtt_data.items():
-        avg, std_dev = calculate_stats(times)
-        print(f"  The avg RTT between {source_ip} and {ip} is: {avg:.2f} ms, the s.d. is: {std_dev:.2f} ms")
+        if times:
+            avg, std_dev = calculate_stats(times)
+            rtt_strings.append((ip, avg, std_dev))
+
+    rtt_strings = sorted(rtt_strings, key=lambda x:x[1])
+    for rtt in rtt_strings:
+        print(f"  The avg RTT between {source_ip} and {rtt[0]} is: {rtt[1]:.2f} ms, the s.d. is: {rtt[2]:.2f} ms")
 
 # Helper function to calculate RTT statistics
 def calculate_stats(times):
