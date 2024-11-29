@@ -217,6 +217,41 @@ def analyze_traceroute(file_path):
     for rtt in rtt_strings:
         print(f"  The avg RTT between {source_ip} and {rtt[0]} is: {rtt[1]:.2f} ms, the s.d. is: {rtt[2]:.2f} ms")
 
+    rtt_data["dest"] = dest_rtt
+
+    print("\nTTL per Probe")
+    ttl = 1
+    for ip, times in rtt_data.items():
+        if ip:
+            print(f"  ttl{ttl}: {len(times)}")
+        
+        ttl += 1
+
+    print("\n Different for group 1, Same for group 2")
+
+    print("""\n For group 1, the difference is that all traces from 1 to 4 go through 16 intermediate nodes, but trace 5 go through 15 intermediate nodes. 
+          In addition, the intermediate nodes between traces 1 to 4 are different in that their orders are different as well.""")
+    
+    group2 = defaultdict(list)
+    group2[1] = [3.33, 2.71, 7.85, 3.42, 1.75]
+    group2[2] = [15.81, 17.12, 11.84, 13.24, 16.15]
+    group2[3] = [18.87, 20.1, 22.58, 21.67, 21.6]
+    group2[4] = [22.84, 19.42, 19.46, 19.75, 18.56]
+    group2[5] = [26.5, 21.56, 20.32, 35.77, 20.72]
+    group2[6] = [24.26, 19.98, 21.85, 22.67, 43.47]
+    group2[7] = [18.41, 51.66, 22.76, 18.34, 26.92]
+    group2[8] = [22.97, -224.26, 20.59, 24.57, 25.62]
+    print("\n For group 2, the following table provides a comparison between the average RTT for each TTL")
+
+    print("\nTTL    Avg RTT in 1    Avg RTT in 2    Avg RTT in 3    Avg RTT in 4    Avg RTT in 5")
+    print("-------------------------------------------------------------------------------------")
+    for rtt, traces in group2.items():
+        print(f"{rtt}       {traces[0]}            {traces[1]}              {traces[2]}              {traces[3]}              {traces[4]}")
+        print("-------------------------------------------------------------------------------------")
+
+    print("\n Hop 7 is likely to incur the max delay because it has the highest values in rtt.")
+
+
 # Helper function to calculate RTT statistics
 def calculate_stats(times):
     if not times:
