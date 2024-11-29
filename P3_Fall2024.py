@@ -182,10 +182,13 @@ def analyze_traceroute(file_path):
     # Post-process the data
     print(f"The IP address of the source node: {source_ip}")
     print(f"The IP address of the ultimate destination node: {destination_ip}")
+    print("-" * 90)
     
     print("The IP addresses of intermediate destination nodes:")
     for idx, ip in enumerate(intermediate_ips):
         print(f"  router {idx + 1}: {ip},")
+
+    print("-" * 90)
 
     print("\nThe values in the protocol field of IP headers:")
     for protocol in protocols:
@@ -193,12 +196,14 @@ def analyze_traceroute(file_path):
             print(f"  {protocol}: ICMP")
         elif protocol == 17:
             print(f"  {protocol}: UDP")
+    print("-" * 90)
 
     # Fragmentation analysis
     total_fragments = sum(len(offsets) for offsets in fragments.values())
     last_offset = max((max(offsets) for offsets in fragments.values()), default=0)
     print(f"\nThe number of fragments created from the original datagram is: {total_fragments}")
     print(f"The offset of the last fragment is: {last_offset}")
+    print("-" * 90)
 
     # RTT statistics
     print("\nRound trip time statistics:")
@@ -218,6 +223,7 @@ def analyze_traceroute(file_path):
         print(f"  The avg RTT between {source_ip} and {rtt[0]} is: {rtt[1]:.2f} ms, the s.d. is: {rtt[2]:.2f} ms")
 
     rtt_data["dest"] = dest_rtt
+    print("-" * 90)
 
     print("\nTTL per Probe")
     ttl = 1
@@ -226,11 +232,14 @@ def analyze_traceroute(file_path):
             print(f"  ttl{ttl}: {len(times)}")
         
         ttl += 1
+    print("-" * 90)
 
-    print("\n Different for group 1, Same for group 2")
+    print("\n The intermediate nodes are different for group 1, Same for group 2")
 
-    print("""\n For group 1, the difference is that all traces from 1 to 4 go through 16 intermediate nodes, but trace 5 go through 15 intermediate nodes. 
-          In addition, the intermediate nodes between traces 1 to 4 are different in that their orders are different as well.""")
+    print("-" * 90)
+
+    print("\nFor group 1, the difference is that all traces from 1 to 4 go through 16 intermediate nodes, but trace 5 go through 15 intermediate nodes.")
+    print("In addition, the intermediate nodes between traces 1 to 4 are different in that their orders are different as well.")
     
     group2 = defaultdict(list)
     group2[1] = [3.33, 2.71, 7.85, 3.42, 1.75]
@@ -241,14 +250,15 @@ def analyze_traceroute(file_path):
     group2[6] = [24.26, 19.98, 21.85, 22.67, 43.47]
     group2[7] = [18.41, 51.66, 22.76, 18.34, 26.92]
     group2[8] = [22.97, -224.26, 20.59, 24.57, 25.62]
-    print("\n For group 2, the following table provides a comparison between the average RTT for each TTL")
+    print("\nFor group 2, the following table provides a comparison between the average RTT for each TTL")
 
     print("\nTTL    Avg RTT in 1    Avg RTT in 2    Avg RTT in 3    Avg RTT in 4    Avg RTT in 5")
-    print("-------------------------------------------------------------------------------------")
+    print("-" * 90)
     for rtt, traces in group2.items():
         print(f"{rtt}       {traces[0]}            {traces[1]}              {traces[2]}              {traces[3]}              {traces[4]}")
-        print("-------------------------------------------------------------------------------------")
+        print("-" * 90)
 
+    print("-" * 90)
     print("\n Hop 7 is likely to incur the max delay because it has the highest values in rtt.")
 
 
